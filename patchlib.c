@@ -112,6 +112,15 @@ int patch_load(char *target, void *addr, void *bytes, int count)
 		}
 	}
 
+	if(!FlushInstructionCache(pi.hProcess,addr,count))
+	{
+			ResumeThread(pi.hThread);
+			CloseHandle(pi.hProcess);
+			CloseHandle(pi.hThread);
+
+			return 0;
+	}
+
 	if(ResumeThread(pi.hThread) == -1)
 	{
 		TerminateProcess(pi.hProcess,0);
@@ -216,6 +225,15 @@ int patch_open(int8_t *name, void *addr, void *bytes,int count)
 			return 0;
 		}
 	}
+
+	if(!FlushInstructionCache(hProc,addr,count))
+		{
+				ResumeThread(hThread);
+				CloseHandle(hProc);
+				CloseHandle(hThread);
+
+				return 0;
+		}
 
 	if(ResumeThread(hThread) == -1)
 	{
