@@ -12,7 +12,7 @@ int patch_load(char *target, void *addr, void *bytes, int count);
 int patch_open(int8_t *name, void *addr, void *bytes,int count);
 
 int SetPrivilege(LPCTSTR lpszPrivilege); // get a handle on any process
-int get_TID(int PID); 								   // return thread id of process if
+int get_TID(int PID); 								   // return thread id of process id
 int get_PID(int8_t *name);						   // return PID of process name
 
 #endif // H_PATCHLIB

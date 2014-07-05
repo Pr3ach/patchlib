@@ -17,6 +17,7 @@
 int patch_raw(int8_t *fileName, uint32_t offset, uint8_t *bytes, int count)
 {
 	FILE *fd = NULL;
+
 	size_t fileSize = 0;
 	int i = 0;
 
@@ -169,7 +170,7 @@ int patch_open(int8_t *name, void *addr, void *bytes,int count)
 
 	if(SuspendThread(hThread) == -1)
 	{
-		printf("LE: %d\n",GetLastError());
+		CloseHandle(hThread);
 		CloseHandle(hProc);
 
 		return 0;
