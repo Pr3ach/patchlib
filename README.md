@@ -10,6 +10,6 @@ These have the following usages:
 
 * patch_raw is used for file patching (ie. on disk).
 * patch_load creates a process, suspend it's main thread, patch and resume it.
-* patch_open is basically performs the same as above, but on an already running process.
+* patch_open is basically the same as above, but on an already running process.
 
 For concrete examples, check out the "tests" folder in this repo.
