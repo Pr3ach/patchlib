@@ -23,9 +23,9 @@
 #define VERSION "1.0"
 
 /* these are the main exported functions */
-int patch_raw(int8_t *fileName, uint32_t offset, uint8_t *bytes, int count);
-int patch_load(char *target, void *addr, void *bytes, int count);
-int patch_open(int8_t *name, void *addr, void *bytes, int count);
+int patch_raw(int8_t *fileName, void offset, void *bytes, SIZE_T count);
+int patch_load(int8_t *target, void *addr, void *bytes, SIZE_T count);
+int patch_open(int8_t *name, void *addr, void *bytes, SIZE_T count);
 
 /* internal functions */
 int SetPrivilege(LPCTSTR lpszPrivilege);
