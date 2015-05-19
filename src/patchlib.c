@@ -45,7 +45,7 @@ int patch_raw(int8_t *fileName, void offset, void *bytes, SIZE_T count)
 
 	for(i; i < count; i++)
 	{
-		if(!fwrite(bytes+i, 1, 1, fd))
+		if(fwrite(bytes+i, 1, 1, fd) != 1)
 		{
 			fclose(fd);
 			return 0;
