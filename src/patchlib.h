@@ -23,14 +23,15 @@
 #define VERSION "1.0"
 
 /* these are the main exported functions */
-int patch_raw(int8_t *fileName, void offset, void *bytes, SIZE_T count);
+int patch_raw(int8_t *file_name, uint32_t offset, void *bytes, SIZE_T count);
 int patch_load(int8_t *target, void *addr, void *bytes, SIZE_T count);
 int patch_open(int8_t *name, void *addr, void *bytes, SIZE_T count);
+int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global);
 
 /* internal functions */
 int SetPrivilege(LPCTSTR lpszPrivilege);
-int get_TID(int PID);
-int get_PID(int8_t *name);
+int pid2tid(int PID);
+int pname2pid(int8_t *name);
+int arraycmp(uint8_t *a1, uint8_t *a2, SIZE_T sz);
 
 #endif /* !H_PATCHLIB */
-

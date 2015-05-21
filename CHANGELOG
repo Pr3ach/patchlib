@@ -1,6 +1,7 @@
 * v1.1
 	- Minor code cleanup
 	- Possible bug fix in patch_raw
+	- Added search & replace feature for raw files
 
 * v1.0
 	- Initial release

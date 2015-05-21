@@ -7,12 +7,12 @@
 void test_raw(void);
 void test_load(void);
 void test_open(void);
+void test_raw_replace(void);
 
 int main(int argc, char *argv[])
 {
-  if(argc !=  2)
-  {
-    printf("Usage: %s <raw|load|open>\n", *argv);
+  if(argc !=  2){
+    printf("Usage: %s <raw|load|open|raw_replace>\n", *argv);
     exit(-1);
   }
 
@@ -22,8 +22,10 @@ int main(int argc, char *argv[])
     test_load();
   else if(!stricmp(argv[1], "open"))
     test_open();
+  else if(!stricmp(argv[1], "raw_replace"))
+    test_raw_replace();
   else
-    printf("Usage: %s <raw|load|open>\n", *argv);
+    printf("Usage: %s <raw|load|open|raw_replace>\n", *argv);
 
   return 0;
 }
@@ -38,8 +40,6 @@ void test_raw(void)
       puts("Fail: patch_raw");
   else
       puts("Success: patch_raw");
-
-  return;
 }
 
 void test_load(void)
@@ -52,8 +52,6 @@ void test_load(void)
       puts("Fail: patch_load");
   else
       puts("Success: patch_load");
-
-  return;
 }
 
 void test_open(void)
@@ -77,6 +75,17 @@ void test_open(void)
       puts("Fail: patch_open");
   else
       puts("Success: patch_open");
-
-  return;
 }
+
+void test_raw_replace(void)
+{
+  char *filename = "target.exe";
+  uint8_t pattern[] = {0x40, 0, 0x30, 0xc0, 0x2e, 0x74};
+  uint8_t patch[] = {0xff, 0x41, 0x42, 0x43, 0x44, 0x00};
+
+  if(!patch_raw_replace(filename, pattern, patch, 6, 6, 1))
+      puts("Fail: patch_raw_replace");
+  else
+      puts("Success: patch_raw_replace");
+}
+

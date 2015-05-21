@@ -26,11 +26,11 @@
 #include <tlhelp32.h>
 #include "patchlib.h"
 
-int patch_raw(int8_t *fileName, void offset, void *bytes, SIZE_T count)
+int patch_raw(int8_t *fileName, uint32_t offset, void *bytes, SIZE_T count)
 {
 	FILE *fd = NULL;
 	SIZE_T fileSize = 0;
-	int i = 0;
+	uint32_t i = 0;
 
 	if(!(fd = fopen(fileName,"rb+")))
 		return 0;
@@ -43,7 +43,7 @@ int patch_raw(int8_t *fileName, void offset, void *bytes, SIZE_T count)
 
 	fseek(fd, offset, SEEK_SET);
 
-	for(i; i < count; i++)
+	for(i; i < (uint32_t)count; i++)
 	{
 		if(fwrite(bytes+i, 1, 1, fd) != 1)
 		{
@@ -57,7 +57,7 @@ int patch_raw(int8_t *fileName, void offset, void *bytes, SIZE_T count)
 	return 1;
 }
 
-int patch_load(char *target, void *addr, void *bytes, SIZE_T count)
+int patch_load(int8_t *target, void *addr, void *bytes, SIZE_T count)
 {
 	PROCESS_INFORMATION pi = {0};
 	STARTUPINFO si = {0};
@@ -149,7 +149,7 @@ int patch_open(int8_t *name, void *addr, void *bytes, SIZE_T count)
 	MEMORY_BASIC_INFORMATION mbi = {0};
 	int PID = 0;
 
-	if(!(PID = get_PID(name)))
+	if(!(PID = pname2pid(name)))
 		return 0;
 
 	SetPrivilege(SE_DEBUG_NAME);
@@ -157,7 +157,7 @@ int patch_open(int8_t *name, void *addr, void *bytes, SIZE_T count)
 	if(!(hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, PID)))
 		return 0;
 
-	if(!(hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, get_TID(PID))))
+	if(!(hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, pid2tid(PID))))
 	{
 		CloseHandle(hProc);
 		return 0;
@@ -235,6 +235,59 @@ int patch_open(int8_t *name, void *addr, void *bytes, SIZE_T count)
 	return 1;
 }
 
+int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global){
+	FILE *fd = NULL;
+	SIZE_T file_sz = 0;
+	uint32_t pos = 0;
+	uint8_t buf[4096] = {0};
+
+	if(s_sz <= 0 || s_sz > 4095)
+		return 0;
+
+	if(r_sz <= 0 || r_sz > 4095)
+		return 0;
+
+	if(!(fd = fopen(file_name, "rb+")))
+		return 0;
+
+	fseek(fd, 0, SEEK_END);
+	file_sz = ftell(fd);
+
+	for(pos = 0; (pos + (uint32_t)r_sz) <= file_sz; pos++){
+		if(fseek(fd, pos, SEEK_SET)){
+			fclose(fd);
+			return 0;
+		}
+
+		if(fread(&buf[0], 1, s_sz, fd) != s_sz){
+			fclose(fd);
+			return 0;
+		}
+
+		/* search pattern found */
+		if(!arraycmp(buf, s, s_sz)){
+			if(!global){
+				if(!patch_raw(file_name, pos, r, r_sz)){
+					fclose(fd);
+					return 0;
+				}
+
+				fclose(fd);
+				return 1;
+			}
+
+			if(!patch_raw(file_name, pos, r, r_sz)){
+				fclose(fd);
+				return 0;
+			}
+		}
+	}
+
+	fclose(fd);
+
+	return 1;
+}
+
 int SetPrivilege(LPCTSTR lpszPrivilege)
 {
 	TOKEN_PRIVILEGES tp;
@@ -266,10 +319,12 @@ int SetPrivilege(LPCTSTR lpszPrivilege)
 	if (!AdjustTokenPrivileges(hToken, 0, &tp, sizeof(TOKEN_PRIVILEGES), (PTOKEN_PRIVILEGES) NULL, (PDWORD) NULL))
 		return 0;
 
+	CloseHandle(hToken);
+
 	return !(GetLastError() == ERROR_NOT_ALL_ASSIGNED);
 }
 
-int get_TID(int PID)
+int pid2tid(int PID)
 {
 	HANDLE hSnap = NULL;
 	THREADENTRY32 th32 = {0};
@@ -299,7 +354,7 @@ int get_TID(int PID)
 	return 0;
 }
 
-int get_PID(int8_t *name)
+int pname2pid(int8_t *name)
 {
 	PROCESSENTRY32 pe32 = {0};
 	HANDLE hSnap = NULL;
@@ -325,6 +380,16 @@ int get_PID(int8_t *name)
 	}while(Process32Next(hSnap, &pe32));
 
 	CloseHandle(hSnap);
+
+	return 0;
+}
+
+int arraycmp(uint8_t *a1, uint8_t *a2, SIZE_T sz){
+	uint32_t i = 0;
+
+	for(i = 0; i < (uint32_t)sz; i++)
+		if(a1[i] != a2[i])
+			return 1;
 
 	return 0;
 }

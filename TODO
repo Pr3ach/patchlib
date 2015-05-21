@@ -1,0 +1,7 @@
+* patch_raw_replace should return the number of occurences successfully patched
+* write patch_open_replace()
+* write patch_load_replace()
+* write patch_backup()
+* rewrite/improve the test suite
+* unify the coding style
+* update README.md
