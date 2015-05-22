@@ -24,222 +24,199 @@
 #include <conio.h>
 #include <windows.h>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include "patchlib.h"
 
-int patch_raw(int8_t *fileName, uint32_t offset, void *bytes, SIZE_T count)
-{
+int patch_raw(int8_t *file_name, long int offset, void *patch, SIZE_T patch_sz){
 	FILE *fd = NULL;
-	SIZE_T fileSize = 0;
+	SIZE_T file_sz = 0;
 	uint32_t i = 0;
 
-	if(!(fd = fopen(fileName,"rb+")))
-		return 0;
+	if(!(fd = fopen(file_name, "rb+")))
+		return -1;
 
 	fseek(fd, 0, SEEK_END);
-	fileSize = ftell(fd);
+	file_sz = ftell(fd);
 
-	if(count+(SIZE_T)offset > fileSize)
-		return 0;
+	if(patch_sz+(SIZE_T)offset > file_sz)
+		return -1;
 
 	fseek(fd, offset, SEEK_SET);
 
-	for(i; i < (uint32_t)count; i++)
-	{
-		if(fwrite(bytes+i, 1, 1, fd) != 1)
-		{
+	for(i; i < (uint32_t)patch_sz; i++){
+		if(fwrite(patch+i, 1, 1, fd) != 1){
 			fclose(fd);
-			return 0;
+			return -1;
 		}
 	}
 
 	fclose(fd);
 
-	return 1;
+	return 0;
 }
 
-int patch_load(int8_t *target, void *addr, void *bytes, SIZE_T count)
-{
+int patch_load(int8_t *path, void *addr, void *patch, SIZE_T patch_sz){
 	PROCESS_INFORMATION pi = {0};
 	STARTUPINFO si = {0};
 	MEMORY_BASIC_INFORMATION mbi = {0};
-	SIZE_T countWrite = 0;
-	DWORD oldProtect = 0;
+	SIZE_T actually_written = 0;
+	DWORD old_prot = 0;
 
-	SetPrivilege(SE_DEBUG_NAME);
+	set_privilege(SE_DEBUG_NAME);
 
-	if(!CreateProcess(target, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi))
-		return 0;
+	if(!CreateProcess(path, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi))
+		return -1;
 
-	if(!VirtualQueryEx(pi.hProcess, addr, &mbi, sizeof(MEMORY_BASIC_INFORMATION)))
-	{
+	if(!VirtualQueryEx(pi.hProcess, addr, &mbi, sizeof(MEMORY_BASIC_INFORMATION))){
 		ResumeThread(pi.hThread);
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
-		return 0;
+		return -1;
 	}
 
 	/* 0x40 == rwx */
-	if(mbi.Protect != 0x40)
-	{
-		if(!VirtualProtectEx(pi.hProcess, addr, count, 0x40, &oldProtect))
-		{
+	if(mbi.Protect != 0x40){
+		if(!VirtualProtectEx(pi.hProcess, addr, patch_sz, 0x40, &old_prot)){
 			ResumeThread(pi.hThread);
 			CloseHandle(pi.hProcess);
 			CloseHandle(pi.hThread);
-			return 0;
+			return -1;
 		}
 	}
 
-	if(!WriteProcessMemory(pi.hProcess, addr, bytes, count, &countWrite))
-	{
+	if(!WriteProcessMemory(pi.hProcess, addr, patch, patch_sz, &actually_written)){
 		ResumeThread(pi.hThread);
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
-		return 0;
+		return -1;
 	}
 
-	if(countWrite != count)
-	{
+	if(actually_written != patch_sz){
 		ResumeThread(pi.hThread);
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
-		return 0;
+		return -1;
 	}
 
 	/* eventually restore mem protection */
-	if(mbi.Protect != 0x40)
-	{
-		if(!VirtualProtectEx(pi.hProcess, addr, count, mbi.Protect, &oldProtect))
-		{
+	if(mbi.Protect != 0x40){
+		if(!VirtualProtectEx(pi.hProcess, addr, patch_sz, mbi.Protect, &old_prot)){
 			ResumeThread(pi.hThread);
 			CloseHandle(pi.hProcess);
 			CloseHandle(pi.hThread);
-			return 0;
+			return -1;
 		}
 	}
 
-	if(!FlushInstructionCache(pi.hProcess, addr, count))
-	{
+	if(!FlushInstructionCache(pi.hProcess, addr, patch_sz)){
 		ResumeThread(pi.hThread);
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
-		return 0;
+		return -1;
 	}
 
-	if(ResumeThread(pi.hThread) == -1)
-	{
+	if(ResumeThread(pi.hThread) == -1){
 		TerminateProcess(pi.hProcess, 0);
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
-		return 0;
+		return -1;
 	}
 
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 
-	return 1;
+	return 0;
 }
 
-int patch_open(int8_t *name, void *addr, void *bytes, SIZE_T count)
-{
-	HANDLE hProc = NULL;
-	HANDLE hThread = NULL;
-	SIZE_T countWrite = 0;
-	DWORD oldProtect = 0;
+int patch_open(int8_t *pname, void *addr, void *patch, SIZE_T patch_sz){
+	HANDLE process = NULL;
+	HANDLE thread = NULL;
+	SIZE_T actually_written = 0;
+	DWORD old_prot = 0;
 	MEMORY_BASIC_INFORMATION mbi = {0};
-	int PID = 0;
+	int pid = 0;
 
-	if(!(PID = pname2pid(name)))
-		return 0;
+	if((pid = pname2pid(pname)) < 0)
+		return -1;
 
-	SetPrivilege(SE_DEBUG_NAME);
+	set_privilege(SE_DEBUG_NAME);
 
-	if(!(hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, PID)))
-		return 0;
+	if(!(process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid)))
+		return -1;
 
-	if(!(hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, pid2tid(PID))))
-	{
-		CloseHandle(hProc);
-		return 0;
+	if(!(thread = OpenThread(THREAD_ALL_ACCESS, FALSE, pid2tid(pid)))){
+		CloseHandle(process);
+		return -1;
 	}
 
-	if(SuspendThread(hThread) == -1)
-	{
-		CloseHandle(hThread);
-		CloseHandle(hProc);
-		return 0;
+	if(SuspendThread(thread) == -1){
+		CloseHandle(thread);
+		CloseHandle(process);
+		return -1;
 	}
 
-	if(!VirtualQueryEx(hProc, addr, &mbi, sizeof(MEMORY_BASIC_INFORMATION)))
-	{
-		ResumeThread(hThread);
-		CloseHandle(hProc);
-		CloseHandle(hThread);
-		return 0;
+	if(!VirtualQueryEx(process, addr, &mbi, sizeof(MEMORY_BASIC_INFORMATION))){
+		ResumeThread(thread);
+		CloseHandle(process);
+		CloseHandle(thread);
+		return -1;
 	}
 
-	if(mbi.Protect != 0x40)
-	{
-		if(!VirtualProtectEx(hProc, addr, count, 0x40, &oldProtect))
-		{
-			ResumeThread(hThread);
-			CloseHandle(hProc);
-			CloseHandle(hThread);
-			return 0;
+	if(mbi.Protect != 0x40){
+		if(!VirtualProtectEx(process, addr, patch_sz, 0x40, &old_prot)){
+			ResumeThread(thread);
+			CloseHandle(process);
+			CloseHandle(thread);
+			return -1;
 		}
 	}
 
-	if(!WriteProcessMemory(hProc, addr, bytes, count, &countWrite))
-	{
-		ResumeThread(hThread);
-		CloseHandle(hProc);
-		CloseHandle(hThread);
-		return 0;
+	if(!WriteProcessMemory(process, addr, patch, patch_sz, &actually_written)){
+		ResumeThread(thread);
+		CloseHandle(process);
+		CloseHandle(thread);
+		return -1;
 	}
 
-	if(countWrite != count)
-	{
-		ResumeThread(hThread);
-		CloseHandle(hProc);
-		CloseHandle(hThread);
-		return 0;
+	if(actually_written != patch_sz){
+		ResumeThread(thread);
+		CloseHandle(process);
+		CloseHandle(thread);
+		return -1;
 	}
 	/* eventually restore mem protection */
-	if(mbi.Protect != 0x40)
-	{
-		if(!VirtualProtectEx(hProc, addr, count, mbi.Protect, &oldProtect))
-		{
-			ResumeThread(hThread);
-			CloseHandle(hProc);
-			CloseHandle(hThread);
-			return 0;
+	if(mbi.Protect != 0x40){
+		if(!VirtualProtectEx(process, addr, patch_sz, mbi.Protect, &old_prot)){
+			ResumeThread(thread);
+			CloseHandle(process);
+			CloseHandle(thread);
+			return -1;
 		}
 	}
 
-	if(!FlushInstructionCache(hProc, addr, count))
-	{
-		ResumeThread(hThread);
-		CloseHandle(hProc);
-		CloseHandle(hThread);
-		return 0;
+	if(!FlushInstructionCache(process, addr, patch_sz)){
+		ResumeThread(thread);
+		CloseHandle(process);
+		CloseHandle(thread);
+		return -1;
 	}
 
-	if(ResumeThread(hThread) == -1)
-	{
-		TerminateProcess(hProc, 0);
-		CloseHandle(hProc);
-		CloseHandle(hThread);
-		return 0;
+	if(ResumeThread(thread) == -1){
+		TerminateProcess(process, 0);
+		CloseHandle(process);
+		CloseHandle(thread);
+		return -1;
 	}
 
-	return 1;
+	return 0;
 }
 
-int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global){
+unsigned long int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global){
 	FILE *fd = NULL;
 	SIZE_T file_sz = 0;
-	uint32_t pos = 0;
+	long int pos = 0;
 	uint8_t buf[4096] = {0};
+	unsigned long int ret = 0;
 
 	if(s_sz <= 0 || s_sz > 4095)
 		return 0;
@@ -253,7 +230,9 @@ int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SI
 	fseek(fd, 0, SEEK_END);
 	file_sz = ftell(fd);
 
-	for(pos = 0; (pos + (uint32_t)r_sz) <= file_sz; pos++){
+	for(pos = 0; (pos + (long int)r_sz) <= file_sz; pos++){
+		memset(&buf[0], 0, 4096);
+
 		if(fseek(fd, pos, SEEK_SET)){
 			fclose(fd);
 			return 0;
@@ -264,8 +243,9 @@ int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SI
 			return 0;
 		}
 
-		/* search pattern found */
+		/* search sequence found */
 		if(!arraycmp(buf, s, s_sz)){
+			ret++;
 			if(!global){
 				if(!patch_raw(file_name, pos, r, r_sz)){
 					fclose(fd);
@@ -273,7 +253,7 @@ int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SI
 				}
 
 				fclose(fd);
-				return 1;
+				return ret;
 			}
 
 			if(!patch_raw(file_name, pos, r, r_sz)){
@@ -285,103 +265,378 @@ int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SI
 
 	fclose(fd);
 
-	return 1;
+	return ret;
 }
 
-int SetPrivilege(LPCTSTR lpszPrivilege)
-{
+unsigned long int patch_load_replace(int8_t *path, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global){
+	PROCESS_INFORMATION pi = {0};
+	STARTUPINFO si = {0};
+	SIZE_T actually_written = 0;
+	SIZE_T actually_read = 0;
+	DWORD old_prot = 0;
+	process_info_t *pinfo = NULL;
+	void *pos = NULL;
+	uint8_t buf[4096] = {0};
+	unsigned long int ret = 0;
+	MEMORY_BASIC_INFORMATION mbi = {0};
+
+	if(s_sz <= 0 || s_sz > 4095)
+		return 0;
+
+	if(r_sz <= 0 || r_sz > 4095)
+		return 0;
+
+	set_privilege(SE_DEBUG_NAME);
+
+	if(!CreateProcess(path, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi))
+		return 0;
+
+	pinfo = malloc(sizeof(process_info_t));
+	memset(pinfo, 0, sizeof(process_info_t));
+
+	if(get_process_info(pi.hProcess, pinfo) < 0){
+		free(pinfo);
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+		return 0;
+	}
+
+	for(pos = (void *)pinfo->base_addr; pos+r_sz <= (pinfo->base_addr + (unsigned long long int)pinfo->image_sz); pos++){
+		memset(&mbi, 0, sizeof(MEMORY_BASIC_INFORMATION));
+		memset(&buf[0], 0, 4096);
+		actually_read = 0;
+		actually_written = 0;
+
+		VirtualQueryEx(pi.hProcess, (LPVOID)pos, &mbi, sizeof(MEMORY_BASIC_INFORMATION));
+
+		/* 0x04 == rw */
+		if(mbi.Protect < 0x04)
+			if(!VirtualProtectEx(pi.hProcess, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), (DWORD)0x04, (PDWORD)&old_prot))
+				continue;
+
+		if(!ReadProcessMemory(pi.hProcess, (LPVOID)pos, &buf[0], s_sz, &actually_read)){
+			if(mbi.Protect != 0x04)
+				VirtualProtectEx(pi.hProcess, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+			free(pinfo);
+			CloseHandle(pi.hThread);
+			CloseHandle(pi.hProcess);
+			return 0;
+		}
+
+		if(s_sz != actually_read){
+			if(mbi.Protect != 0x04)
+				VirtualProtectEx(pi.hProcess, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+			continue;
+		}
+
+		if(!arraycmp(buf, s, s_sz)){
+			if(!global){
+				if(!WriteProcessMemory(pi.hProcess, (LPVOID)pos, r, r_sz, &actually_written)){
+					if(mbi.Protect != 0x04)
+						VirtualProtectEx(pi.hProcess, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+					free(pinfo);
+					CloseHandle(pi.hThread);
+					CloseHandle(pi.hProcess);
+					return 0;
+				}
+
+				if(mbi.Protect != 0x04)
+					VirtualProtectEx(pi.hProcess, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+
+				if(actually_written != r_sz){
+					free(pinfo);
+					CloseHandle(pi.hThread);
+					CloseHandle(pi.hProcess);
+					return 0;
+				}	
+
+				FlushInstructionCache(pi.hProcess, pos, r_sz);
+				free(pinfo);
+				CloseHandle(pi.hThread);
+				CloseHandle(pi.hProcess);
+				return 1;
+			}
+
+			if(!WriteProcessMemory(pi.hProcess, (LPVOID)pos, r, r_sz, &actually_written)){
+				if(mbi.Protect != 0x04)
+					VirtualProtectEx(pi.hProcess, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+				free(pinfo);
+				CloseHandle(pi.hThread);
+				CloseHandle(pi.hProcess);
+				return ret;
+			}
+
+			if(mbi.Protect != 0x04)
+				VirtualProtectEx(pi.hProcess, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+
+			if(actually_written != r_sz){
+				free(pinfo);
+				CloseHandle(pi.hThread);
+				CloseHandle(pi.hProcess);
+				return ret;
+			}
+
+			ret++;
+			FlushInstructionCache(pi.hProcess, pos, r_sz);
+		}
+	}
+
+	free(pinfo);
+	return ret;
+}
+
+unsigned long int patch_open_replace(int8_t *pname, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global){
+	HANDLE process = NULL;
+	SIZE_T actually_written = 0;
+	SIZE_T actually_read = 0;
+	DWORD old_prot = 0;
+	process_info_t *pinfo = NULL;
+	void *pos = NULL;
+	uint8_t buf[4096] = {0};
+	unsigned long int ret = 0;
+	MEMORY_BASIC_INFORMATION mbi = {0};
+	int pid = 0;
+
+	if(s_sz <= 0 || s_sz > 4095)
+		return 0;
+
+	if(r_sz <= 0 || r_sz > 4095)
+		return 0;
+
+	set_privilege(SE_DEBUG_NAME);
+
+	if((pid = pname2pid(pname)) < 0)
+		return 0;
+
+	if(!(process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid)))
+		return 0;
+
+	pinfo = malloc(sizeof(process_info_t));
+	memset(pinfo, 0, sizeof(process_info_t));
+
+	if(get_process_info(process, pinfo) < 0){
+		free(pinfo);
+		CloseHandle(process);
+		return 0;
+	}
+
+	for(pos = (void *)pinfo->base_addr; pos+r_sz <= (pinfo->base_addr + (unsigned long long int)pinfo->image_sz); pos++){
+		memset(&mbi, 0, sizeof(MEMORY_BASIC_INFORMATION));
+		memset(&buf[0], 0, 4096);
+		actually_read = 0;
+		actually_written = 0;
+
+		VirtualQueryEx(process, (LPVOID)pos, &mbi, sizeof(MEMORY_BASIC_INFORMATION));
+
+		/* 0x04 == rw */
+		if(mbi.Protect < 0x04)
+			if(!VirtualProtectEx(process, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), (DWORD)0x04, (PDWORD)&old_prot))
+				continue;
+
+		if(!ReadProcessMemory(process, (LPVOID)pos, &buf[0], s_sz, &actually_read)){
+			if(mbi.Protect != 0x04)
+				VirtualProtectEx(process, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+			free(pinfo);
+			CloseHandle(process);
+			return 0;
+		}
+
+		if(s_sz != actually_read){
+			if(mbi.Protect != 0x04)
+				VirtualProtectEx(process, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+			continue;
+		}
+
+		if(!arraycmp(buf, s, s_sz)){
+			if(!global){
+				if(!WriteProcessMemory(process, (LPVOID)pos, r, r_sz, &actually_written)){
+					if(mbi.Protect != 0x04)
+						VirtualProtectEx(process, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+					free(pinfo);
+					CloseHandle(process);
+					return 0;
+				}
+
+				if(mbi.Protect != 0x04)
+					VirtualProtectEx(process, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+
+				if(actually_written != r_sz){
+					free(pinfo);
+					CloseHandle(process);
+					return 0;
+				}	
+
+				FlushInstructionCache(process, pos, r_sz);
+				free(pinfo);
+				CloseHandle(process);
+				return 1;
+			}
+
+			if(!WriteProcessMemory(process, (LPVOID)pos, r, r_sz, &actually_written)){
+				if(mbi.Protect != 0x04)
+					VirtualProtectEx(process, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+				free(pinfo);
+				CloseHandle(process);
+				return ret;
+			}
+
+			if(mbi.Protect != 0x04)
+				VirtualProtectEx(process, (LPVOID)pos, (SIZE_T)MAX(r_sz, s_sz), mbi.Protect, (PDWORD)&old_prot);
+
+			if(actually_written != r_sz){
+				free(pinfo);
+				CloseHandle(process);
+				return ret;
+			}
+
+			ret++;
+			FlushInstructionCache(process, pos, r_sz);
+		}
+	}
+
+	free(pinfo);
+	return ret;
+}
+
+int patch_backup(int8_t *src, int8_t *dest){
+	FILE *fd_src = NULL;
+	FILE *fd_dest = NULL;
+	SIZE_T src_sz = 0;
+	uint8_t *buf = NULL;
+
+	/* File already exists ? */
+	if(fd_dest = fopen(dest, "r")){
+		fclose(fd_dest);
+		return -1;
+	}
+
+	fd_dest = NULL;
+
+	if(!(fd_dest = fopen(dest, "wb")))
+		return -1;
+
+	if(!(fd_src = fopen(src, "rb"))){
+		fclose(fd_dest);
+		return -1;
+	}
+
+	src_sz = get_file_size(fd_src);
+
+	if(!src_sz){
+		fclose(fd_dest);
+		fclose(fd_src);
+		return -1;
+	}
+
+	buf = malloc(src_sz * sizeof(uint8_t) + 1);
+
+	if(fread(buf, 1, src_sz, fd_src) != src_sz){
+		fclose(fd_dest);
+		fclose(fd_src);
+		remove(dest);
+		return -1;
+	}
+	
+	if(fwrite(buf, 1, src_sz, fd_dest) != src_sz){
+		fclose(fd_dest);
+		fclose(fd_src);
+		remove(dest);
+		return -1;
+	}
+
+	fclose(fd_dest);
+	fclose(fd_src);
+	free(buf);
+
+	return 0;
+}
+
+
+int set_privilege(const char *privilege){
 	TOKEN_PRIVILEGES tp;
 	LUID luid;
-	HANDLE hToken = NULL;
+	HANDLE token = NULL;
 
-	if(!OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, FALSE, &hToken))
-	{
-		if (GetLastError() == ERROR_NO_TOKEN)
-		{
+	if(!OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, FALSE, &token)){
+		if (GetLastError() == ERROR_NO_TOKEN){
 			if (!ImpersonateSelf(SecurityImpersonation))
-				return 0;
+				return -1;
 
-			if(!OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, FALSE, &hToken))
-				return 0;
+			if(!OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, FALSE, &token))
+				return -1;
 		}
 
 		else
-			return 0;
+			return -1;
 	}
 
-	if (!LookupPrivilegeValue(NULL,lpszPrivilege,&luid ))
-		return 0;
+	if (!LookupPrivilegeValue(NULL, privilege, &luid))
+		return -1;
 
 	tp.PrivilegeCount = 1;
 	tp.Privileges[0].Luid = luid;
 	tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 
-	if (!AdjustTokenPrivileges(hToken, 0, &tp, sizeof(TOKEN_PRIVILEGES), (PTOKEN_PRIVILEGES) NULL, (PDWORD) NULL))
-		return 0;
+	if (!AdjustTokenPrivileges(token, 0, &tp, sizeof(TOKEN_PRIVILEGES), (PTOKEN_PRIVILEGES)NULL, (PDWORD)NULL))
+		return -1;
 
-	CloseHandle(hToken);
+	CloseHandle(token);
 
-	return !(GetLastError() == ERROR_NOT_ALL_ASSIGNED);
+	return -(GetLastError() == ERROR_NOT_ALL_ASSIGNED);
 }
 
-int pid2tid(int PID)
-{
-	HANDLE hSnap = NULL;
+int pid2tid(int pid){
+	HANDLE snap = NULL;
 	THREADENTRY32 th32 = {0};
 
 	th32.dwSize = sizeof(THREADENTRY32);
 
-	if(!(hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)))
-		return 0;
+	if(!(snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)))
+		return -1;
 
-	if(!Thread32First(hSnap, &th32))
-	{
-		CloseHandle(hSnap);
-		return 0;
+	if(!Thread32First(snap, &th32)){
+		CloseHandle(snap);
+		return -1;
 	}
 
 	do
 	{
-		if(th32.th32OwnerProcessID == PID)
-		{
-			CloseHandle(hSnap);
+		if(th32.th32OwnerProcessID == pid){
+			CloseHandle(snap);
 			return th32.th32ThreadID;
 		}
-	}while(Thread32Next(hSnap, &th32));
+	}while(Thread32Next(snap, &th32));
 
-	CloseHandle(hSnap);
+	CloseHandle(snap);
 
-	return 0;
+	return -1;
 }
 
-int pname2pid(int8_t *name)
-{
+int pname2pid(int8_t *pname){
 	PROCESSENTRY32 pe32 = {0};
-	HANDLE hSnap = NULL;
+	HANDLE snap = NULL;
 
 	pe32.dwSize = sizeof(PROCESSENTRY32);
 
-	if(!(hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)))
-		return 0;
+	if(!(snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)))
+		return -1;
 
-	if(!Process32First(hSnap, &pe32))
-	{
-		CloseHandle(hSnap);
-		return 0;
+	if(!Process32First(snap, &pe32)){
+		CloseHandle(snap);
+		return -1;
 	}
 
 	do
 	{
-		if(!stricmp(pe32.szExeFile, name))
-		{
-			CloseHandle(hSnap);
+		if(!stricmp(pe32.szExeFile, pname)){
+			CloseHandle(snap);
 			return pe32.th32ProcessID;
 		}
-	}while(Process32Next(hSnap, &pe32));
+	}while(Process32Next(snap, &pe32));
 
-	CloseHandle(hSnap);
+	CloseHandle(snap);
 
-	return 0;
+	return -1;
 }
 
 int arraycmp(uint8_t *a1, uint8_t *a2, SIZE_T sz){
@@ -389,7 +644,44 @@ int arraycmp(uint8_t *a1, uint8_t *a2, SIZE_T sz){
 
 	for(i = 0; i < (uint32_t)sz; i++)
 		if(a1[i] != a2[i])
-			return 1;
+			return -1;
 
 	return 0;
+}
+
+int get_process_info(HANDLE process, process_info_t *pinfo){
+	HMODULE mods[256] = {NULL};
+	MODULEINFO modinfo = {0};
+	DWORD needed = 0;
+
+	if(!EnumProcessModulesEx(process, &mods[0], 256 * sizeof(HMODULE), &needed, LIST_MODULES_ALL))
+		return -1;
+
+	if(!mods[0])
+		return -1;
+
+	if(!GetModuleInformation(process, mods[0], &modinfo, sizeof(MODULEINFO)))
+		return -1;
+
+	pinfo->base_addr = (unsigned long long int)mods[0];
+	pinfo->entry_point = ((unsigned long int)modinfo.EntryPoint - (unsigned long int)mods[0]);
+	pinfo->image_sz = (unsigned long int)modinfo.SizeOfImage;
+
+	return 0;
+}
+
+SIZE_T get_file_size(FILE *fd){
+	long int pos = 0;
+	SIZE_T sz = 0;
+
+	if(!fd)
+		return 0;
+
+	pos = ftell(fd);
+
+	fseek(fd, 0, SEEK_END);
+	sz = ftell(fd);
+	fseek(fd, pos, SEEK_SET);
+
+	return sz;
 }

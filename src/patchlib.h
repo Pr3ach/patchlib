@@ -22,16 +22,29 @@
 
 #define VERSION "1.0"
 
-/* these are the main exported functions */
-int patch_raw(int8_t *file_name, uint32_t offset, void *bytes, SIZE_T count);
-int patch_load(int8_t *target, void *addr, void *bytes, SIZE_T count);
-int patch_open(int8_t *name, void *addr, void *bytes, SIZE_T count);
-int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global);
+#define MAX(a, b) (a > b ? a : b)
 
-/* internal functions */
-int SetPrivilege(LPCTSTR lpszPrivilege);
-int pid2tid(int PID);
-int pname2pid(int8_t *name);
+/* these are the main exported functions */
+int patch_raw(int8_t *file_name, long int offset, void *patch, SIZE_T patch_sz);
+int patch_load(int8_t *path, void *addr, void *patch, SIZE_T patch_sz);
+int patch_open(int8_t *pname, void *addr, void *patch, SIZE_T patch_sz);
+unsigned long int patch_raw_replace(int8_t *file_name, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global);
+unsigned long int patch_load_replace(int8_t *path, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global);
+unsigned long int patch_open_replace(int8_t *pname, uint8_t *s, uint8_t *r, SIZE_T s_sz, SIZE_T r_sz, int global);
+int patch_backup(int8_t *src, int8_t *dest);
+
+/* internal stuff */
+typedef struct {
+	unsigned long long int base_addr;
+	unsigned long int entry_point; /* rva */
+	unsigned long int image_sz;
+} process_info_t;
+
+int set_privilege(const char *privilege);
+int pid2tid(int pid);
+int pname2pid(int8_t *pname);
 int arraycmp(uint8_t *a1, uint8_t *a2, SIZE_T sz);
+int get_process_info(HANDLE process, process_info_t *pinfo);
+SIZE_T get_file_size(FILE *fd);
 
 #endif /* !H_PATCHLIB */
